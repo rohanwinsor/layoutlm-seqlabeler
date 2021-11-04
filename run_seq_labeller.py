@@ -68,7 +68,7 @@ MODEL_CLASSES = {
 }
 
 
-def set_seed(args):
+def set_seed(seed, n_gpu):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -92,10 +92,8 @@ def get_labels(path):
     return labels
 
 
-def train(  # noqa C901
-    args, train_dataset, model, tokenizer, labels, pad_token_label_id
-):
-    """ Train the model """
+def train(train_dataset, model, tokenizer, labels, pad_token_label_id):  # noqa C901
+    """Train the model"""
     if local_rank in [-1, 0]:
         tb_writer = SummaryWriter(logdir="runs/" + os.path.basename(output_dir))
 
@@ -115,15 +113,11 @@ def train(  # noqa C901
     if max_steps > 0:
         t_total = max_steps
         num_train_epochs = (
-            max_steps
-            // (len(train_dataloader) // gradient_accumulation_steps)
-            + 1
+            max_steps // (len(train_dataloader) // gradient_accumulation_steps) + 1
         )
     else:
         t_total = (
-            len(train_dataloader)
-            // gradient_accumulation_steps
-            * num_train_epochs
+            len(train_dataloader) // gradient_accumulation_steps * num_train_epochs
         )
 
     # Prepare optimizer and schedule (linear warmup and decay)
@@ -146,9 +140,7 @@ def train(  # noqa C901
             "weight_decay": 0.0,
         },
     ]
-    optimizer = AdamW(
-        optimizer_grouped_parameters, lr=learning_rate, eps=adam_epsilon
-    )
+    optimizer = AdamW(optimizer_grouped_parameters, lr=learning_rate, eps=adam_epsilon)
     scheduler = get_linear_schedule_with_warmup(
         optimizer, num_warmup_steps=warmup_steps, num_training_steps=t_total
     )
@@ -159,9 +151,7 @@ def train(  # noqa C901
             raise ImportError(
                 "Please install apex from https://www.github.com/nvidia/apex to use fp16 training."
             )
-        model, optimizer = amp.initialize(
-            model, optimizer, opt_level=fp16_opt_level
-        )
+        model, optimizer = amp.initialize(model, optimizer, opt_level=fp16_opt_level)
 
     # multi-gpu training (should be after apex fp16 initialization)
     if n_gpu > 1:
@@ -180,9 +170,7 @@ def train(  # noqa C901
     logger.info("***** Running training *****")
     logger.info("  Num examples = %d", len(train_dataset))
     logger.info("  Num Epochs = %d", num_train_epochs)
-    logger.info(
-        "  Instantaneous batch size per GPU = %d", per_gpu_train_batch_size
-    )
+    logger.info("  Instantaneous batch size per GPU = %d", per_gpu_train_batch_size)
     logger.info(
         "  Total train batch size (w. parallel, distributed & accumulation) = %d",
         train_batch_size
@@ -198,7 +186,9 @@ def train(  # noqa C901
     train_iterator = trange(
         int(num_train_epochs), desc="Epoch", disable=local_rank not in [-1, 0]
     )
-    set_seed(args)  # Added here for reproductibility (even between python 2 and 3)
+    set_seed(
+        seed, n_gpu
+    )  # Added here for reproductibility (even between python 2 and 3)
     for _ in train_iterator:
         epoch_iterator = tqdm(
             train_dataloader, desc="Iteration", disable=local_rank not in [-1, 0]
@@ -238,9 +228,7 @@ def train(  # noqa C901
                         amp.master_params(optimizer), max_grad_norm
                     )
                 else:
-                    torch.nn.utils.clip_grad_norm_(
-                        model.parameters(), max_grad_norm
-                    )
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
                 optimizer.step()
                 scheduler.step()  # Update learning rate schedule
                 model.zero_grad()
@@ -291,7 +279,7 @@ def train(  # noqa C901
                     )  # Take care of distributed/parallel training
                     model_to_save.save_pretrained(output_dir)
                     tokenizer.save_pretrained(output_dir)
-                    torch.save(args, os.path.join(output_dir, "training_bin"))
+                    torch.save(os.path.join(output_dir, "training_bin"))
                     logger.info("Saving model checkpoint to %s", output_dir)
 
             if max_steps > 0 and global_step > max_steps:
@@ -307,8 +295,8 @@ def train(  # noqa C901
     return global_step, tr_loss / global_step
 
 
-def evaluate(args, model, tokenizer, labels, pad_token_label_id, mode, prefix=""):
-    eval_dataset = FunsdDataset(args, tokenizer, labels, pad_token_label_id, mode=mode)
+def evaluate(model, tokenizer, labels, pad_token_label_id, mode, prefix=""):
+    eval_dataset = FunsdDataset(tokenizer, labels, pad_token_label_id, mode=mode)
 
     eval_batch_size = per_gpu_eval_batch_size * max(1, n_gpu)
     eval_sampler = SequentialSampler(eval_dataset)
@@ -338,9 +326,7 @@ def evaluate(args, model, tokenizer, labels, pad_token_label_id, mode, prefix=""
             if model_type in ["layoutlm"]:
                 inputs["bbox"] = batch[4].to(device)
             inputs["token_type_ids"] = (
-                batch[2].to(device)
-                if model_type in ["bert", "layoutlm"]
-                else None
+                batch[2].to(device) if model_type in ["bert", "layoutlm"] else None
             )  # RoBERTa don"t use segment_ids
             outputs = model(**inputs)
             tmp_eval_loss, logits = outputs[:2]
@@ -391,29 +377,26 @@ def evaluate(args, model, tokenizer, labels, pad_token_label_id, mode, prefix=""
 
     return results, preds_list
 
+
 def main(
-        data_dir ,
-        model_type ,
-        model_name_or_path ,
-        do_lower_case,
-        max_seq_length ,
-        do_train,
-        do_eval,
-        evaluate_during_training,
-        num_train_epochs ,
-        logging_steps ,
-        save_steps ,
-        output_dir ,
-        labels ,
-        per_gpu_train_batch_size ,
-        per_gpu_eval_batch_size ,
-        no_cuda
-    ):
-    if (
-        os.path.exists(output_dir)
-        and os.listdir(output_dir)
-        and do_train
-    ):
+    data_dir,
+    model_type,
+    model_name_or_path,
+    do_lower_case,
+    max_seq_length,
+    do_train,
+    do_eval,
+    evaluate_during_training,
+    num_train_epochs,
+    logging_steps,
+    save_steps,
+    output_dir,
+    labels,
+    per_gpu_train_batch_size,
+    per_gpu_eval_batch_size,
+    no_cuda,
+):
+    if os.path.exists(output_dir) and os.listdir(output_dir) and do_train:
         if not overwrite_output_dir:
             raise ValueError(
                 "Output directory ({}) already exists and is not empty. Use --overwrite_output_dir to overcome.".format(
@@ -431,11 +414,7 @@ def main(
             )
         )
 
-    if (
-        not os.path.exists(output_dir)
-        and do_train
-        and local_rank in [-1, 0]
-    ):
+    if not os.path.exists(output_dir) and do_train and local_rank in [-1, 0]:
         os.makedirs(output_dir)
 
     # Setup distant debugging if needed
@@ -444,9 +423,7 @@ def main(
         import ptvsd
 
         print("Waiting for debugger attach")
-        ptvsd.enable_attach(
-            address=(server_ip, server_port), redirect_output=True
-        )
+        ptvsd.enable_attach(address=(server_ip, server_port), redirect_output=True)
         ptvsd.wait_for_attach()
 
     # Setup CUDA, GPU & distributed training
@@ -481,7 +458,7 @@ def main(
     )
 
     # Set seed
-    set_seed(args)
+    set_seed(seed, n_gpu)
 
     labels = get_labels(labels)
     num_labels = len(labels)
@@ -515,16 +492,13 @@ def main(
         torch.distributed.barrier()  # Make sure only the first process in distributed training will download model & vocab
 
     model.to(device)
-
-    logger.info("Training/evaluation parameters %s", args)
-
     # Training
     if do_train:
         train_dataset = FunsdDataset(
-            args, tokenizer, labels, pad_token_label_id, mode="train"
+            tokenizer, labels, pad_token_label_id, mode="train"
         )
         global_step, tr_loss = train(
-            args, train_dataset, model, tokenizer, labels, pad_token_label_id
+            train_dataset, model, tokenizer, labels, pad_token_label_id
         )
         logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
 
@@ -544,7 +518,7 @@ def main(
         tokenizer.save_pretrained(output_dir)
 
         # Good practice: save your training arguments together with the trained model
-        torch.save(args, os.path.join(output_dir, "training_bin"))
+        torch.save(os.path.join(output_dir, "training_bin"))
 
     # Evaluation
     results = {}
@@ -592,7 +566,7 @@ def main(
         model = model_class.from_pretrained(output_dir)
         model.to(device)
         result, predictions = evaluate(
-            args, model, tokenizer, labels, pad_token_label_id, mode="test"
+            model, tokenizer, labels, pad_token_label_id, mode="test"
         )
         # Save results
         output_test_results_file = os.path.join(output_dir, "test_results.txt")
@@ -600,13 +574,9 @@ def main(
             for key in sorted(result.keys()):
                 writer.write("{} = {}\n".format(key, str(result[key])))
         # Save predictions
-        output_test_predictions_file = os.path.join(
-            output_dir, "test_predictions.txt"
-        )
+        output_test_predictions_file = os.path.join(output_dir, "test_predictions.txt")
         with open(output_test_predictions_file, "w", encoding="utf8") as writer:
-            with open(
-                os.path.join(data_dir, "test.txt"), "r", encoding="utf8"
-            ) as f:
+            with open(os.path.join(data_dir, "test.txt"), "r", encoding="utf8") as f:
                 example_id = 0
                 for line in f:
                     if line.startswith("-DOCSTART-") or line == "" or line == "\n":
@@ -632,20 +602,20 @@ def main(
 
 if __name__ == "__main__":
     main(
-        data_dir = "data/data_resumes_2",
-        model_type = "layoutlm",
-        model_name_or_path = "layoutlm-large-uncased",
+        data_dir="data/data_resumes_2",
+        model_type="layoutlm",
+        model_name_or_path="layoutlm-large-uncased",
         do_lower_case=True,
-        max_seq_length = 512,
+        max_seq_length=512,
         do_train=True,
         do_eval=True,
         evaluate_during_training=True,
-        num_train_epochs = 100.0,
-        logging_steps = 1130,
-        save_steps = 22600,
-        output_dir = "resumes_512_2",
-        labels = "data/data_resumes_2/labels.txt",
-        per_gpu_train_batch_size = 2,
-        per_gpu_eval_batch_size = 2,
-        no_cuda=True
+        num_train_epochs=100.0,
+        logging_steps=1130,
+        save_steps=22600,
+        output_dir="resumes_512_2",
+        labels="data/data_resumes_2/labels.txt",
+        per_gpu_train_batch_size=2,
+        per_gpu_eval_batch_size=2,
+        no_cuda=True,
     )
